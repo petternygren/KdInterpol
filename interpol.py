@@ -8,9 +8,12 @@ import numpy.ma as ma
 #for interpolation
 from scipy.spatial import cKDTree
 
-#for netcdf
+#for IO
 import pygrib
+from gribapi import *
+from datetime import date
 
+#plot
 import matplotlib.pyplot as plt
 
 class KdInterpol:
@@ -51,28 +54,54 @@ class KdInterpol:
 
 	def __call__(self):
 		
-		def write_to_file(self,variable):
-			pass
-			#write results to netcdf		
-				
+		def write_to_file(variable):
+			"""
+			writing to grib file using low level C bindings
+			"""
+			
+			OldTemplate=self.D1[8]		
+
+			NewTemplate=self.D2[1]		
+			
+			grbout=open('test.grb','wb')
+
+			OldTemplate.dataDate=20140728	
+			OldTemplate.values=variable
+			
+			OldTemplate.latitudeOfFirstGridPoint=NewTemplate.latitudeOfFirstGridPoint
+			OldTemplate.latitudeOfFirstGridPointInDegrees=NewTemplate.latitudeOfFirstGridPointInDegrees
+			OldTemplate.longitudeOfFirstGridPoint=NewTemplate.longitudeOfFirstGridPoint
+			OldTemplate.longitudeOfFirstGridPointInDegrees=NewTemplate.longitudeOfFirstGridPointInDegrees
+
+			OldTemplate.latitudeOfLastGridPoint=NewTemplate.latitudeOfLastGridPoint
+			OldTemplate.latitudeOfLastGridPointInDegrees=NewTemplate.latitudeOfLastGridPointInDegrees
+			OldTemplate.longitudeOfLastGridPoint=NewTemplate.longitudeOfLastGridPoint
+			OldTemplate.longitudeOfLastGridPointInDegrees=NewTemplate.longitudeOfLastGridPointInDegrees
+
+			msg=OldTemplate.tostring()	
+			grbout.write(msg)
+			grbout.close()
+			
+			test=pygrib.open('test.grb')
+			test=test[1]
+					
 		def extrapolate_simpel(TEMPvarTMP):
 			"""
 			covers the coast with water ~10km inland then reapplies the coastline with a mask from
 			the new grid. This is done to remove things such as the "london pier"
 			"""
 			mask_var=self.D2[3].values
-			temp_var=ma.masked_array(TEMPvarTMP,TEMPvarTMP=='--')
 
 			for shift in (-1,1):
 				for axis in (0,1):        
-					a_shifted=np.roll(temp_var,shift=shift,axis=axis)
-					idx=~a_shifted.mask * temp_var.mask
-					temp_var[idx]=a_shifted[idx]
-			temp_var=ma.masked_array(temp_var,mask=np.logical_not(mask_var))
-			return temp_var	
+					a_shifted=np.roll(TEMPvarTMP,shift=shift,axis=axis)
+					idx=~a_shifted.mask * TEMPvarTMP.mask
+					TEMPvarTMP[idx]=a_shifted[idx]
+			TEMPvarTMP=ma.masked_array(TEMPvarTMP,mask=np.logical_not(mask_var))
+			return TEMPvarTMP	
 		
 		"""
-		build DKtree based in source grid
+		build KDtree based in source grid
 		"""
 		tree = cKDTree(zip(self.xs, self.ys, self.zs))
 
@@ -88,6 +117,7 @@ class KdInterpol:
 		
 		#nearest neighbor interpolation algorithm
 		d, inds = tree.query(zip(self.xt, self.yt, self.zt), k = 1)
+		
 		self.temp_var_nearest = self.temp_var.flatten()[inds].reshape(self.lonTARGET.shape)
 		
 		#Inverse distance weighting with 10 neighbors (k=10) algorithm
@@ -95,28 +125,40 @@ class KdInterpol:
 		w = 1.0 / d**2
 		self.temp_var_idw = np.sum(w * self.temp_var.flatten()[inds], axis=1) / np.sum(w, axis=1)
 		self.temp_var_idw.shape = self.lonTARGET.shape
+			
+		write_to_file(self.temp_var_nearest)
+
+	
+	
+
 
 	def plot_algorithms(self):	
+		test=pygrib.open('test.grb')
+		self.temp_var_test=test[1].values
+
+		print self.temp_var_test.shape
+		print self.temp_var_nearest.shape
+		
 		plt.figure(figsize=(10,5))
 		plt.subplot(121)
-		plt.pcolormesh(self.temp_var_nearest)
-		plt.xlim([0, self.temp_var_nearest.shape[0]])
-		plt.ylim([0, self.temp_var_nearest.shape[1]])
+		plt.pcolormesh(self.temp_var_test)
+		plt.xlim([0, self.temp_var_test.shape[0]])
+		plt.ylim([0, self.temp_var_test.shape[1]])
 		plt.colorbar()
-		plt.title("Nearest neighbor")
+		plt.title("from grib")
 
 		plt.subplot(122)
-		plt.pcolormesh(self.temp_var_idw)
+		plt.pcolormesh(self.temp_var_nearest)
 		plt.colorbar()
 		plt.xlim([0, self.temp_var_nearest.shape[0]])
 		plt.ylim([0, self.temp_var_nearest.shape[1]])
-		plt.title("IDW of square distance \n using 10 neighbors");
+		plt.title("from numpy array");
 	
 		plt.show()
 	
 #.........................................................................
 def main():#test
-	file1='NS02_201001010000+096H00M'
+	file1='NS02_201109240000+024H00M'
 	file2='NS02_SURF_201407241200+012H00M'
 	interpol=KdInterpol(file1,file2)
 	interpol()
