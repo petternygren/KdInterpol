@@ -10,7 +10,7 @@ from scipy.spatial import cKDTree
 
 #for IO
 import pygrib
-from gribapi import *
+import time
 
 #plot
 import matplotlib.pyplot as plt
@@ -64,7 +64,7 @@ class KdInterpol:
 			
 			grbout=open(filename,'ab')
 
-			OldTemplate.dataDate=20140728	
+			OldTemplate.dataDate=time.strftime("%Y%m%d")
 			OldTemplate.values=variable	
 			
 			msg=OldTemplate.tostring()	
