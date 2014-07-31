@@ -11,7 +11,6 @@ from scipy.spatial import cKDTree
 #for IO
 import pygrib
 from gribapi import *
-from datetime import date
 
 #plot
 import matplotlib.pyplot as plt
@@ -54,36 +53,23 @@ class KdInterpol:
 
 	def __call__(self):
 		
-		def write_to_file(variable):
+		def write_to_file(variable,iter,filename):
 			"""
-			writing to grib file using low level C bindings
-			"""
-			
-			OldTemplate=self.D1[8]		
+			writing to grib file
+			"""	
+			filename=filename[49:] #filename without path
+			variable=variable.filled(9999) #grib_apis interpretation of 9999 are '--' 	
 
-			NewTemplate=self.D2[1]		
+			OldTemplate=self.D1[iter]		
 			
-			grbout=open('test.grb','wb')
+			grbout=open(filename,'ab')
 
 			OldTemplate.dataDate=20140728	
-			OldTemplate.values=variable
+			OldTemplate.values=variable	
 			
-			OldTemplate.latitudeOfFirstGridPoint=NewTemplate.latitudeOfFirstGridPoint
-			OldTemplate.latitudeOfFirstGridPointInDegrees=NewTemplate.latitudeOfFirstGridPointInDegrees
-			OldTemplate.longitudeOfFirstGridPoint=NewTemplate.longitudeOfFirstGridPoint
-			OldTemplate.longitudeOfFirstGridPointInDegrees=NewTemplate.longitudeOfFirstGridPointInDegrees
-
-			OldTemplate.latitudeOfLastGridPoint=NewTemplate.latitudeOfLastGridPoint
-			OldTemplate.latitudeOfLastGridPointInDegrees=NewTemplate.latitudeOfLastGridPointInDegrees
-			OldTemplate.longitudeOfLastGridPoint=NewTemplate.longitudeOfLastGridPoint
-			OldTemplate.longitudeOfLastGridPointInDegrees=NewTemplate.longitudeOfLastGridPointInDegrees
-
 			msg=OldTemplate.tostring()	
 			grbout.write(msg)
 			grbout.close()
-			
-			test=pygrib.open('test.grb')
-			test=test[1]
 					
 		def extrapolate_simpel(TEMPvarTMP):
 			"""
@@ -91,13 +77,14 @@ class KdInterpol:
 			the new grid. This is done to remove things such as the "london pier"
 			"""
 			mask_var=self.D2[3].values
-
+			
 			for shift in (-1,1):
 				for axis in (0,1):        
 					a_shifted=np.roll(TEMPvarTMP,shift=shift,axis=axis)
 					idx=~a_shifted.mask * TEMPvarTMP.mask
 					TEMPvarTMP[idx]=a_shifted[idx]
-			TEMPvarTMP=ma.masked_array(TEMPvarTMP,mask=np.logical_not(mask_var))
+			TEMPvarTMP=ma.masked_array(TEMPvarTMP,mask=np.logical_not(mask_var),fill_value=np.nan)	
+			
 			return TEMPvarTMP	
 		
 		"""
@@ -107,62 +94,75 @@ class KdInterpol:
 
 		"""
 		interpolates data from source to target with the nearest neighbor
-		or the IDW of square method using 10 neighbors
 
 		this needs to be done iteralivly over all variables in the source!
 		"""
-		
-		self.temp_var=self.D1[8].values #set variable, this needs to be looped!
-		self.temp_var=extrapolate_simpel(self.temp_var)
-		
-		#nearest neighbor interpolation algorithm
-		d, inds = tree.query(zip(self.xt, self.yt, self.zt), k = 1)
-		
-		self.temp_var_nearest = self.temp_var.flatten()[inds].reshape(self.lonTARGET.shape)
-		
-		#Inverse distance weighting with 10 neighbors (k=10) algorithm
-		d, inds = tree.query(zip(self.xt, self.yt, self.zt), k = 10)
-		w = 1.0 / d**2
-		self.temp_var_idw = np.sum(w * self.temp_var.flatten()[inds], axis=1) / np.sum(w, axis=1)
-		self.temp_var_idw.shape = self.lonTARGET.shape
+	
+		self.i=1
+		for MSG in self.D1:
+
+			print "Interpolating and writing msg nr: ",self.i
 			
-		write_to_file(self.temp_var_nearest)
-
+			self.temp_var=self.D1[self.i].values #read current grib messege
+			self.temp_var=extrapolate_simpel(self.temp_var) #makes the data fit the new grid
+			
+			"""
+			nearest neighbor interpolation algorithm
+			"""
+			d, inds = tree.query(zip(self.xt, self.yt, self.zt), k = 1)	
+			self.temp_var_nearest = self.temp_var.flatten()[inds].reshape(self.lonTARGET.shape)
+			write_to_file(self.temp_var_nearest,self.i,self.source)
+			
+			self.i+=1 #iterator, goes from 1 to last grib messege
 	
-	
+	@staticmethod
+	def plot_algorithms(file1,file2):	
+		file1=pygrib.open(file1)
+		temp_var_file1=file1[8].values
 
-
-	def plot_algorithms(self):	
-		test=pygrib.open('test.grb')
-		self.temp_var_test=test[1].values
-
-		print self.temp_var_test.shape
-		print self.temp_var_nearest.shape
+		file2=pygrib.open(file2)	
+		temp_var_file2=file2[3].values
+		
+		file1.close()
+		file2.close()
 		
 		plt.figure(figsize=(10,5))
 		plt.subplot(121)
-		plt.pcolormesh(self.temp_var_test)
-		plt.xlim([0, self.temp_var_test.shape[0]])
-		plt.ylim([0, self.temp_var_test.shape[1]])
+		plt.pcolormesh(temp_var_file1)
+		plt.xlim([0, temp_var_file1.shape[0]])
+		plt.ylim([0, temp_var_file1.shape[1]])
 		plt.colorbar()
-		plt.title("from grib")
+		plt.title("from file1")
 
 		plt.subplot(122)
-		plt.pcolormesh(self.temp_var_nearest)
+		plt.pcolormesh(temp_var_file2)
 		plt.colorbar()
-		plt.xlim([0, self.temp_var_nearest.shape[0]])
-		plt.ylim([0, self.temp_var_nearest.shape[1]])
-		plt.title("from numpy array");
+		plt.xlim([0, temp_var_file2.shape[0]])
+		plt.ylim([0, temp_var_file2.shape[1]])
+		plt.title("from file2");
 	
 		plt.show()
 	
 #.........................................................................
-def main():#test
-	file1='NS02_201109240000+024H00M'
-	file2='NS02_SURF_201407241200+012H00M'
-	interpol=KdInterpol(file1,file2)
-	interpol()
-	interpol.plot_algorithms()
+import glob
+import os
+def main():
+	MODE='plot'# or 'run'
+
+	if MODE=='plot':
+		file1='NS02_201101010000+096H00M'
+		file2='NS02_SURF_201407241200+012H00M'
+		KdInterpol.plot_algorithms(file1,file2)
+	if MODE=='run':
+		INPUTpath=''
+		OUTPUTpath=''
+		file2=''
+		os.chdir(OUTPUTpath)
+		for fname in sorted(glob.iglob(INPUTpath)):
+				print fname[49:] #only filename without path
+				file1=fname
+				interpol=KdInterpol(file1,file2)
+				interpol()
 
 if __name__== "__main__":
 	main()
